@@ -232,7 +232,13 @@ function CV() {
         </Entry>
         <Entry date="2022—2025">
           <h3>Student supervision</h3>
-          <p>Supervised Ziqian Ariel Xu through undergraduate and master’s research at UCL.</p>
+          <p>
+            Supervised Ziqian Ariel Xu through undergraduate and master’s research at UCL.
+            Ziqian is currently enrolled in the {" "}
+            <ExternalLink href="https://www.fchampalimaud.org/indp-students-2025">
+              International Neuroscience Doctoral Programme (INDP) at the Champalimaud Foundation
+            </ExternalLink>.
+          </p>
         </Entry>
       </div>
     </div>
