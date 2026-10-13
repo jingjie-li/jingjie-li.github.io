@@ -1,293 +1,307 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import bioEnglishSource from "./content/bio.en.md?raw";
+import bioChineseSource from "./content/bio.zh.md?raw";
+import cvSource from "./content/cv.md?raw";
+import { works, worksChinese } from "./content/works";
 
-type Tab = "bio" | "cv";
+type Tab = "bio" | "works" | "cv";
+type Language = "en" | "zh";
+type Metadata = Record<string, string>;
+type BioContent = { metadata: Metadata; paragraphs: string[]; cards: { title: string; paragraphs: string[] }[]; news: { date: string; text: string }[] };
+type CvEntry = { date: string; title?: string; paragraphs: string[] };
+type CvSectionData = { title: string; entries: CvEntry[] };
+type CvContent = { metadata: Metadata; title: string; sections: CvSectionData[] };
 
-type EntryProps = {
-  date: string;
-  children: React.ReactNode;
+function parseMarkdownFile(source: string) {
+  const match = source.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) return { metadata: {}, body: source.trim() };
+  const metadata = Object.fromEntries(match[1].split("\n").map((line) => {
+    const separator = line.indexOf(":");
+    return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+  }));
+  return { metadata, body: match[2].trim() };
+}
+
+function parseBio(source: string): BioContent {
+  const { metadata, body } = parseMarkdownFile(source);
+  const blocks = body.split(/\n(?=## )/);
+  const paragraphs = blocks[0].split(/\n\s*\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
+  const cards: BioContent["cards"] = [];
+  const news: BioContent["news"] = [];
+  for (const block of blocks.slice(1)) {
+    const [heading, ...lines] = block.split("\n");
+    const text = lines.join("\n").trim();
+    if (heading === "## News") {
+      for (const entry of text.split(/\n(?=### )/).filter(Boolean)) {
+        const [date, ...description] = entry.split("\n");
+        news.push({ date: date.replace(/^### /, ""), text: description.join("\n").trim() });
+      }
+    } else {
+      cards.push({ title: heading.replace(/^## /, ""), paragraphs: text.split(/\n\s*\n/).filter(Boolean) });
+    }
+  }
+  return { metadata, paragraphs, cards, news };
+}
+
+function parseCv(source: string): CvContent {
+  const { metadata, body } = parseMarkdownFile(source);
+  const title = body.match(/^# (.+)$/m)?.[1] ?? "";
+  const sectionBlocks = body.split(/\n(?=## )/).filter((block) => block.startsWith("## "));
+  const sections = sectionBlocks.map((block) => {
+    const [heading, ...sectionLines] = block.split("\n");
+    const entryBlocks = sectionLines.join("\n").trim().split(/\n(?=### )/).filter(Boolean);
+    const entries = entryBlocks.map((entryBlock) => {
+      const [dateLine, ...entryLines] = entryBlock.split("\n");
+      const titleLine = entryLines.find((line) => line.startsWith("#### "));
+      const paragraphs = entryLines
+        .filter((line) => line !== titleLine)
+        .join("\n")
+        .trim()
+        .split(/\n\s*\n/)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean);
+      return { date: dateLine.replace(/^### /, ""), title: titleLine?.replace(/^#### /, ""), paragraphs };
+    });
+    return { title: heading.replace(/^## /, ""), entries };
+  });
+  return { metadata, title, sections };
+}
+
+const bioContent: Record<Language, BioContent> = {
+  en: parseBio(bioEnglishSource),
+  zh: parseBio(bioChineseSource),
 };
+const cvContent = parseCv(cvSource);
 
-function Entry({ date, children }: EntryProps) {
+function renderInline(markdown: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const tokenPattern = /(\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|(?<!\\)\*[^*\n]+(?<!\\)\*| {2}\n)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = tokenPattern.exec(markdown))) {
+    if (match.index > cursor) nodes.push(markdown.slice(cursor, match.index).replace(/\\\*/g, "*"));
+    const token = match[0];
+    if (token === "  \n") {
+      nodes.push(<br key={key++} />);
+    } else if (token.startsWith("[")) {
+      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/)!;
+      const external = /^https?:\/\//.test(link[2]);
+      nodes.push(<a key={key++} href={link[2]} target={external ? "_blank" : undefined} rel={external ? "noreferrer" : undefined}>{link[1]}{external && <span className="external-mark" aria-hidden="true">↗</span>}</a>);
+    } else if (token.startsWith("**")) {
+      nodes.push(<strong key={key++}>{token.slice(2, -2)}</strong>);
+    } else {
+      nodes.push(<em key={key++}>{token.slice(1, -1)}</em>);
+    }
+    cursor = tokenPattern.lastIndex;
+  }
+  if (cursor < markdown.length) nodes.push(markdown.slice(cursor).replace(/\\\*/g, "*"));
+  return nodes;
+}
+
+function ProfileIcon({ name }: { name: "email" | "github" | "gitlab" | "scholar" | "zhihu" }) {
   return (
-    <div className="cv-entry">
-      <div className="cv-date">{date}</div>
-      <div className="cv-detail">{children}</div>
-    </div>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      {name === "email" && <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 6 9 7 9-7" /></>}
+      {name === "github" && <><path d="M9 19c-4.5 1.4-4.5-2.5-6.3-3M15 22v-3.5c0-1 .1-1.8-.5-2.5 3.4-.4 7-1.6 7-7.4 0-1.6-.5-2.9-1.5-4 .2-.8.6-2.6-.2-4.1 0 0-1.3-.4-4.3 1.6a15 15 0 0 0-7 0C5.5.1 4.2.5 4.2.5c-.8 1.5-.4 3.3-.2 4.1-1 1.1-1.5 2.4-1.5 4 0 5.8 3.6 7 7 7.4-.5.5-.5 1.4-.5 2.5V22" transform="translate(2 2) scale(.83)" /></>}
+      {name === "gitlab" && <><path d="m12 21 9-7-3-11-3 7H9L6 3 3 14l9 7Z" /><path d="m3 14 6-4 3 11 3-11 6 4M9 10l-3 4 6 7 6-7-3-4" /></>}
+      {name === "scholar" && <><path d="m2 8 10-5 10 5-10 5-10-5Z" /><path d="M6 10v6c3 3 9 3 12 0v-6M22 8v8" /></>}
+      {name === "zhihu" && <text x="12" y="17.5" textAnchor="middle" fill="currentColor" stroke="none" fontSize="18" fontWeight="500">知</text>}
+    </svg>
   );
 }
 
-function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a href={href} target="_blank" rel="noreferrer">
-      {children}<span className="external-mark" aria-hidden="true">↗</span>
-    </a>
-  );
-}
-
-function Bio() {
+function Bio({ language }: { language: Language }) {
+  const content = bioContent[language];
+  const meta = content.metadata;
   return (
     <div id="bio-panel" role="tabpanel" aria-labelledby="bio-tab" className="panel bio-panel">
       <div className="intro-grid">
         <aside className="portrait-column">
-          <img
-            className="portrait-photo"
-            src="/portrait.png"
-            alt="Portrait of Jingjie Li"
-            width="2099"
-            height="2099"
-          />
-          <div className="profile-links" aria-label="Contact links">
-            <a href="mailto:jingjie.li.21@ucl.ac.uk">Email</a>
-            <ExternalLink href="https://github.com/jingjie-li">GitHub</ExternalLink>
-            <ExternalLink href="https://gitlab.com/lijingjie1">GitLab</ExternalLink>
+          <img className="portrait-photo" src={meta.portrait} alt={meta.portraitAlt} width="2099" height="2099" />
+          <div className="profile-links" aria-label={meta.contactLabel}>
+            <a href={`mailto:${meta.email}`} aria-label={meta.emailLabel} title={meta.emailLabel}><ProfileIcon name="email" /></a>
+            <a href={meta.github} target="_blank" rel="noreferrer" aria-label="GitHub" title="GitHub"><ProfileIcon name="github" /></a>
+            <a href={meta.gitlab} target="_blank" rel="noreferrer" aria-label="GitLab" title="GitLab"><ProfileIcon name="gitlab" /></a>
+            <a href={meta.scholar} target="_blank" rel="noreferrer" aria-label="Google Scholar" title="Google Scholar"><ProfileIcon name="scholar" /></a>
+            <a href={meta.zhihu} target="_blank" rel="noreferrer" aria-label={language === "zh" ? "知乎" : "Zhihu"} title={language === "zh" ? "知乎" : "Zhihu"}><ProfileIcon name="zhihu" /></a>
           </div>
         </aside>
-
         <div className="bio-copy">
-          <h1>Jingjie Li</h1>
-          <p className="role">Research Fellow at the Sainsbury Wellcome Centre, UCL</p>
-
-          <div className="bio-text">
-            <p>
-              I am a systems neuroscience Research Fellow in the {" "}
-              <ExternalLink href="https://erlichlab.org/">Erlich Lab</ExternalLink> at the
-              Sainsbury Wellcome Centre, University College London, where I recently completed
-              my PhD earlier this year.
-            </p>
-            <p>
-              During my PhD, I studied how the brain flexibly selects, maintains, and transforms
-              information to guide decisions and actions. My work combines carefully designed
-              behavioural tasks for rats with Neuropixels recordings, optogenetics, and quantitative
-              modelling. I presented this research as a talk at the main {" "}
-              <ExternalLink href="https://youtu.be/c5Vf0L5InSM?t=2276">COSYNE 2026 meeting</ExternalLink>,
-              and a related manuscript is available as a {" "}
-              <ExternalLink href="https://doi.org/10.1101/2025.11.28.691186">preprint</ExternalLink>.
-            </p>
-            <p>
-              I am actively seeking a postdoctoral position for my next step. I am particularly
-              interested in motor control, short-term memory, and decision-making, and I want to
-              understand embodied cognition: how we use the body as a resource for cognition when
-              solving tasks, and the neural mechanisms that make this possible. Please {" "}
-              <a href="mailto:jingjie.li.21@ucl.ac.uk">reach out</a> if you would like to have a conversation.
-            </p>
-            <p>
-              Outside the lab, I enjoy road cycling—exploring new routes and scenery, and climbing
-              mountains under my own power. You can follow my rides on {" "}
-              <ExternalLink href="https://www.strava.com/athletes/145556491">Strava</ExternalLink>.
-            </p>
-          </div>
-
-          <div className="research-tags" aria-label="Research interests">
-            <span>Short-term memory</span>
-            <span>Decision-making</span>
-            <span>Motor control</span>
-            <span>Embodied cognition</span>
-            <span>Neural population dynamics</span>
+          <h1>{meta.name}</h1>
+          <p className="role">{meta.role}</p>
+          <div className="bio-text">{content.paragraphs.map((paragraph) => <p key={paragraph}>{renderInline(paragraph)}</p>)}</div>
+          <div className="research-tags" aria-label={meta.interestsLabel}>
+            {meta.interests.split("|").map((interest) => <span key={interest}>{interest.trim()}</span>)}
           </div>
         </div>
       </div>
+      <div className="research-grid">
+        {content.cards.map((card) => (
+          <section className="research-card" key={card.title}>
+            <h2>{card.title}</h2>
+            {card.paragraphs.map((paragraph) => <p key={paragraph}>{renderInline(paragraph)}</p>)}
+          </section>
+        ))}
+      </div>
+      <section className="news-section" aria-labelledby="news-heading">
+        <h2 id="news-heading">{meta.newsLabel}</h2>
+        <ol className="news-list">
+          {content.news.map((entry) => (
+            <li key={entry.date}>
+              <span className="news-date">{entry.date}</span>
+              <p>{renderInline(entry.text)}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
     </div>
+  );
+}
+
+function CvEntryView({ entry }: { entry: CvEntry }) {
+  return (
+    <div className="cv-entry">
+      <div className="cv-date">{entry.date}</div>
+      <div className="cv-detail">
+        {entry.title && <h3>{renderInline(entry.title)}</h3>}
+        {entry.paragraphs.map((paragraph) => <p className={paragraph.startsWith("*") ? "muted" : undefined} key={paragraph}>{renderInline(paragraph)}</p>)}
+      </div>
+    </div>
+  );
+}
+
+function CvSection({ section }: { section: CvSectionData }) {
+  return (
+    <section className={`cv-section ${section.title.startsWith("Publications") ? "publications" : ""}`}>
+      <h2>{section.title}</h2>
+      <div className="cv-items">{section.entries.map((entry, index) => <CvEntryView entry={entry} key={`${entry.date}-${index}`} />)}</div>
+    </section>
   );
 }
 
 function CV() {
+  const awards = cvContent.sections.find((section) => section.title === "Awards & fellowships");
+  const skills = cvContent.sections.find((section) => section.title === "Skills");
   return (
     <div id="cv-panel" role="tabpanel" aria-labelledby="cv-tab" className="panel cv-panel">
       <div className="cv-heading">
-        <div>
-          <p className="eyebrow">Curriculum vitae</p>
-          <h1>Experience &amp; work</h1>
-        </div>
-        <div className="cv-contact">
-          <a href="mailto:jingjie.li.21@ucl.ac.uk">jingjie.li.21@ucl.ac.uk</a>
-          <span>London, United Kingdom</span>
-        </div>
+        <div><p className="eyebrow">{cvContent.metadata.eyebrow}</p><h1>{cvContent.title}</h1></div>
+        <div className="cv-contact"><a href={`mailto:${cvContent.metadata.email}`}>{cvContent.metadata.email}</a><span>{cvContent.metadata.location}</span></div>
       </div>
+      {cvContent.sections.map((section) => {
+        if (section === skills) return null;
+        if (section === awards && skills) return (
+          <section className="cv-section split-section" key="awards-skills">
+            <div><h2>{awards.title}</h2><div className="cv-items">{awards.entries.map((entry, index) => <CvEntryView entry={entry} key={`${entry.date}-${index}`} />)}</div></div>
+            <div><h2>{skills.title}</h2><dl className="skills-list">{skills.entries.map((entry) => <Fragment key={entry.date}><dt>{entry.date}</dt><dd>{renderInline(entry.paragraphs.join(" "))}</dd></Fragment>)}</dl></div>
+          </section>
+        );
+        return <CvSection section={section} key={section.title} />;
+      })}
+    </div>
+  );
+}
 
-      <div className="cv-section">
-        <h2>Education</h2>
-        <Entry date="2021—2026">
-          <h3>PhD in Systems Neuroscience</h3>
-          <p><strong>University College London</strong> · Sainsbury Wellcome Centre</p>
-          <p>
-            Advisor: Dr {" "}
-            <ExternalLink href="https://www.sainsburywellcome.org/people/jeffrey-erlich">
-              Jeffrey C. Erlich
-            </ExternalLink>
-          </p>
-          <p className="muted">Thesis: Context-Dependent Neural Mechanisms of Memory-Guided Decisions</p>
-          <p><strong>2025 Jon Driver Prize</strong> · Outstanding PhD student in neuroscience, UCL</p>
-        </Entry>
-        <Entry date="2019—2021">
-          <h3>PhD study in Neural Science</h3>
-          <p><strong>New York University</strong> · New York / Shanghai</p>
-          <p className="muted">Transferred to UCL in the second year of the programme.</p>
-        </Entry>
-        <Entry date="2015—2019">
-          <h3>BSc in Biomedical Engineering</h3>
-          <p><strong>Xi’an Jiaotong University</strong> · China</p>
-          <p className="muted">Thesis: Design and implementation of a portable EEG monitoring system, from amplifier hardware to software.</p>
-        </Entry>
-      </div>
-
-      <div className="cv-section publications">
-        <h2>Publications &amp; preprints</h2>
-        <Entry date="2026">
-          <p>Michael Lohse, Oliver M. Gauld, Maja T. Skrętowska, Ainiah Masood, Chaofei Bao, <strong>Jingjie Li</strong>, et al.</p>
-          <h3><ExternalLink href="https://doi.org/10.7554/eLife.111872.1">Zapit: Open Source Random-Access Photostimulation For Neuroscience</ExternalLink></h3>
-          <p className="muted"><em>eLife</em></p>
-        </Entry>
-        <Entry date="2025">
-          <p><strong>Jingjie Li</strong>, Ariel Ziqian Xu, Chaofei Bao, Albert Albesa-González, Liujunli Li, Claudia Clopath, Jeffrey C. Erlich</p>
-          <h3><ExternalLink href="https://doi.org/10.1101/2025.11.28.691186">Flexible selection of working memory representations to reduce cognitive cost</ExternalLink></h3>
-          <p className="muted"><em>Nature Communications</em> · in revision</p>
-        </Entry>
-        <Entry date="2025">
-          <p>Oliver M. Gauld*, Chaofei Bao*, <strong>Jingjie Li</strong>, Gauthier Boeshertz, Timothy P. H. Sit, et al.</p>
-          <h3><ExternalLink href="https://doi.org/10.64898/2025.12.11.693624">A frontal motor circuit for economic decisions and actions</ExternalLink></h3>
-          <p className="muted"><em>Nature Neuroscience</em> · in revision</p>
-        </Entry>
-        <Entry date="2024">
-          <p>Liujunli Li, Timo Flesch, Ce Ma, <strong>Jingjie Li</strong>, Yizhou Chen, Hung-Tu Chen, Jeffrey C. Erlich</p>
-          <h3><ExternalLink href="https://doi.org/10.1523/JNEUROSCI.0018-24.2024">Encoding of 2D self-centered plans and world-centered positions in the rat frontal orienting field</ExternalLink></h3>
-          <p className="muted"><em>Journal of Neuroscience</em></p>
-        </Entry>
-        <Entry date="2023">
-          <p>Chaofei Bao*, Xiaoyue Zhu*, Joshua Möller-Mara, <strong>Jingjie Li</strong>, Sylvain Dubroqua, Jeffrey C. Erlich</p>
-          <h3><ExternalLink href="https://doi.org/10.1038/s41593-023-01461-x">The rat frontal orienting field dynamically encodes value for economic decisions under risk</ExternalLink></h3>
-          <p className="muted"><em>Nature Neuroscience</em></p>
-        </Entry>
-      </div>
-
-      <div className="cv-section">
-        <h2>Selected presentations</h2>
-        <Entry date="Mar 2026">
-          <h3>Context-dependent localisation of short-term memory</h3>
-          <p>Selected talk, COSYNE · Lisbon</p>
-          <p className="muted">Top 2% of submissions · <ExternalLink href="https://youtu.be/c5Vf0L5InSM?t=2276">Watch recording</ExternalLink></p>
-        </Entry>
-        <Entry date="Jun 2025">
-          <h3>Task context shapes short-term memory localisation</h3>
-          <p>Selected talk, UCL Neuroscience Symposium</p>
-        </Entry>
-        <Entry date="Oct 2024">
-          <h3>Task context shapes short-term memory localisation</h3>
-          <p>Poster, Society for Neuroscience annual meeting · Chicago</p>
-        </Entry>
-        <Entry date="Mar 2024">
-          <h3>Distinct cortical mechanisms for egocentric vs. allocentric planning</h3>
-          <p>Poster, COSYNE · Lisbon</p>
-        </Entry>
-      </div>
-
-      <div className="cv-section">
-        <h2>Open-source projects</h2>
-        <Entry date="2022">
-          <h3><ExternalLink href="https://gitlab.com/sainsbury-wellcome-centre/delab/bpod-auto">High-throughput rodent behavioural system</ExternalLink></h3>
-          <p>Hardware and software infrastructure based on Bpod, supporting daily training, electrophysiology, and optogenetics experiments.</p>
-        </Entry>
-        <Entry date="2022">
-          <h3><ExternalLink href="https://gitlab.com/sainsbury-wellcome-centre/delab/devops/scale-app">Body-weight management system</ExternalLink></h3>
-          <p>RFID-based animal tracking and automated weight-data management for water-restricted animals.</p>
-        </Entry>
-        <Entry date="2018">
-          <h3><ExternalLink href="https://github.com/jingjie-li/ECGMonitor">Portable ECG / oximeter monitor</ExternalLink></h3>
-          <p>Low-power hardware design with Bluetooth data streaming.</p>
-        </Entry>
-        <Entry date="2018">
-          <h3><ExternalLink href="https://github.com/erlichlab/BpodSoundModule">Low-latency sound module</ExternalLink></h3>
-          <p>Under 10 ms playback latency using a TI Hi-Fi DAC and Raspberry Pi I²S control.</p>
-        </Entry>
-      </div>
-
-      <div className="cv-section split-section">
-        <div>
-          <h2>Awards &amp; fellowships</h2>
-          <Entry date="2025"><p><strong>Jon Driver Prize</strong><br />Outstanding PhD student in neuroscience, UCL</p></Entry>
-          <Entry date="2021—2025"><p>Studentship, Sainsbury Wellcome Centre, UCL</p></Entry>
-          <Entry date="2019—2021"><p>Doctoral scholarship, NYU Shanghai</p></Entry>
-          <Entry date="2018"><p>First Prize, National Biomedical Engineering Competition, China</p></Entry>
-          <Entry date="2016—2018"><p>Siyuan Scholarship and Outstanding Student, Xi’an Jiaotong University</p></Entry>
-        </div>
-        <div>
-          <h2>Skills</h2>
-          <dl className="skills-list">
-            <dt>Programming</dt><dd>Python, MATLAB, C, C++, SQL, R, Git, LaTeX, Verilog HDL, assembly</dd>
-            <dt>Hardware</dt><dd>PCB layout, embedded-system integration</dd>
-            <dt>Experimental</dt><dd>Stereotaxic surgery, behavioural training, extracellular recording, optogenetics, chemogenetics</dd>
-            <dt>Languages</dt><dd>English, Chinese (native)</dd>
-          </dl>
+function Works({ language }: { language: Language }) {
+  const isChinese = language === "zh";
+  const filterLabels: Record<string, string> = isChinese ? { All: "全部", "PhD work": "博士研究", Ongoing: "进行中" } : { All: "All", "PhD work": "PhD work", Ongoing: "Ongoing" };
+  const [filter, setFilter] = useState("All");
+  const visibleWorks = works.filter((work) => filter === "All" || (filter === "Ongoing" ? work.ongoing : work.category === "PhD work")).map((work) => isChinese ? { ...work, ...worksChinese[work.id] } : work);
+  return (
+    <div id="works-panel" role="tabpanel" aria-labelledby="works-tab" className="panel works-panel">
+      <div className="works-heading">
+        <div><p className="eyebrow">{isChinese ? "研究项目" : "Research projects"}</p><h1>{isChinese ? "我的研究" : "My works"}</h1></div>
+        <div className="work-filters" role="group" aria-label={isChinese ? "筛选研究项目" : "Filter research projects"}>
+          {["All", "PhD work", "Ongoing"].map((label) => <button key={label} type="button" aria-pressed={filter === label} onClick={() => setFilter(label)}>{filterLabels[label]}</button>)}
         </div>
       </div>
-
-      <div className="cv-section">
-        <h2>Community &amp; supervision</h2>
-        <Entry date="2022—2024">
-          <h3>Allen Institute ecephys spike sorting</h3>
-          <p>Bug fixes and refinements for accurate waveform and quality metrics.</p>
-        </Entry>
-        <Entry date="2024">
-          <h3>BrainGlobe</h3>
-          <p>Created a tutorial for silicon-probe tracking with computational neuroanatomy tools.</p>
-        </Entry>
-        <Entry date="2022—2025">
-          <h3>Student supervision</h3>
-          <p>
-            Supervised Ziqian Ariel Xu through undergraduate and master’s research at UCL.
-            Ziqian is currently enrolled in the {" "}
-            <ExternalLink href="https://www.fchampalimaud.org/indp-students-2025">
-              International Neuroscience Doctoral Programme (INDP) at the Champalimaud Foundation
-            </ExternalLink>.
-          </p>
-        </Entry>
+      <div className="works-list">
+        {visibleWorks.map((work) => (
+          <article className="work-entry" key={work.id}>
+            <a className="work-image-link" href={work.image} target="_blank" rel="noreferrer" aria-label={`${isChinese ? "查看图片" : "View figure"}: ${work.title}`}>
+              <img src={work.image} alt={work.alt} className="work-image" loading="lazy" />
+            </a>
+            <div className="work-copy">
+              <p className="work-category">{isChinese ? (work.category === "PhD work" ? "博士研究" : "新方向") : work.category}</p>
+              <h2>{work.title}</h2>
+              <p>{work.description}</p>
+              {work.links.length > 0 && <div className="work-links">{work.links.map((link) => <a href={link.href} key={link.label} target="_blank" rel="noreferrer">{isChinese ? (link.label === "Preprint" ? "预印本" : "COSYNE 报告") : link.label}<span className="external-mark" aria-hidden="true">↗</span></a>)}</div>}
+            </div>
+          </article>
+        ))}
       </div>
     </div>
   );
 }
 
+function tabFromHash(): Tab {
+  return window.location.hash === "#cv" ? "cv" : window.location.hash === "#works" ? "works" : "bio";
+}
+
+function getInitialLanguage(): Language {
+  const saved = window.localStorage.getItem("language");
+  if (saved === "en" || saved === "zh") return saved;
+  return "en";
+}
+
 function App() {
-  const initialTab: Tab = window.location.hash === "#cv" ? "cv" : "bio";
-  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+  const [activeTab, setActiveTab] = useState<Tab>(tabFromHash);
+  const [language, setLanguage] = useState<Language>(getInitialLanguage);
   const bioRef = useRef<HTMLButtonElement>(null);
   const cvRef = useRef<HTMLButtonElement>(null);
+  const worksRef = useRef<HTMLButtonElement>(null);
+  const meta = bioContent[language].metadata;
+  const isChinese = language === "zh";
+  const pageIsChinese = isChinese && activeTab !== "cv";
 
   useEffect(() => {
-    const onHashChange = () => setActiveTab(window.location.hash === "#cv" ? "cv" : "bio");
+    const onHashChange = () => setActiveTab(tabFromHash());
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  useEffect(() => {
+    const pageMeta = pageIsChinese ? bioContent.zh.metadata : bioContent.en.metadata;
+    document.documentElement.lang = pageIsChinese ? "zh-CN" : "en";
+    document.title = pageMeta.pageTitle;
+    document.querySelector('meta[name="description"]')?.setAttribute("content", pageMeta.description);
+    window.localStorage.setItem("language", language);
+  }, [language, pageIsChinese]);
+
   const selectTab = (tab: Tab) => {
     setActiveTab(tab);
-    window.history.replaceState(null, "", tab === "cv" ? "#cv" : window.location.pathname);
+    window.history.replaceState(null, "", tab === "bio" ? window.location.pathname : `#${tab}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const moveTabFocus = (event: React.KeyboardEvent, current: Tab) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const next = current === "bio" ? "cv" : "bio";
+    const order: Tab[] = ["bio", "works", "cv"];
+    const next = order[(order.indexOf(current) + (event.key === "ArrowRight" ? 1 : 2)) % order.length];
     selectTab(next);
-    (next === "bio" ? bioRef : cvRef).current?.focus();
+    ({ bio: bioRef, works: worksRef, cv: cvRef })[next].current?.focus();
   };
 
   return (
-    <div className="site-shell">
+    <div className={`site-shell ${isChinese ? "is-zh" : ""}`}>
       <header className="site-header">
-        <a className="wordmark" href="#bio" onClick={(event) => { event.preventDefault(); selectTab("bio"); }} aria-label="Jingjie Li, home">
-          <span>Jingjie</span> Li
-        </a>
-        <div className="tabs" role="tablist" aria-label="Profile sections">
-          <button ref={bioRef} id="bio-tab" role="tab" aria-selected={activeTab === "bio"} aria-controls="bio-panel" tabIndex={activeTab === "bio" ? 0 : -1} onClick={() => selectTab("bio")} onKeyDown={(event) => moveTabFocus(event, "bio")}>Bio</button>
-          <button ref={cvRef} id="cv-tab" role="tab" aria-selected={activeTab === "cv"} aria-controls="cv-panel" tabIndex={activeTab === "cv" ? 0 : -1} onClick={() => selectTab("cv")} onKeyDown={(event) => moveTabFocus(event, "cv")}>CV</button>
+        <div className="header-primary">
+          <a className="wordmark" href="#bio" onClick={(event) => { event.preventDefault(); selectTab("bio"); }} aria-label={meta.homeLabel}><span>{meta.name}</span></a>
+          <div className="tabs" role="tablist" aria-label={isChinese ? "个人资料栏目" : "Profile sections"}>
+            <button ref={bioRef} id="bio-tab" role="tab" aria-selected={activeTab === "bio"} aria-controls="bio-panel" tabIndex={activeTab === "bio" ? 0 : -1} onClick={() => selectTab("bio")} onKeyDown={(event) => moveTabFocus(event, "bio")}>{meta.bioTab}</button>
+            <button ref={worksRef} id="works-tab" role="tab" aria-selected={activeTab === "works"} aria-controls="works-panel" tabIndex={activeTab === "works" ? 0 : -1} onClick={() => selectTab("works")} onKeyDown={(event) => moveTabFocus(event, "works")}>{isChinese ? "我的研究" : "My works"}</button>
+            <button ref={cvRef} id="cv-tab" role="tab" aria-selected={activeTab === "cv"} aria-controls="cv-panel" tabIndex={activeTab === "cv" ? 0 : -1} onClick={() => selectTab("cv")} onKeyDown={(event) => moveTabFocus(event, "cv")}>CV</button>
+          </div>
+        </div>
+        <div className="language-switch" role="group" aria-label={meta.languageLabel}>
+          <button type="button" className={!isChinese ? "active" : ""} aria-pressed={!isChinese} onClick={() => setLanguage("en")}>EN</button><span aria-hidden="true">/</span><button type="button" className={isChinese ? "active" : ""} aria-pressed={isChinese} onClick={() => setLanguage("zh")}>中</button>
         </div>
       </header>
-
-      <main>{activeTab === "bio" ? <Bio /> : <CV />}</main>
-
-      <footer>
-        <span>© {new Date().getFullYear()} Jingjie Li</span>
-      </footer>
+      <main>{activeTab === "bio" ? <Bio language={language} /> : activeTab === "works" ? <Works language={language} /> : <CV />}</main>
+      <footer><span>© {new Date().getFullYear()} {meta.name}</span></footer>
     </div>
   );
 }
