@@ -40,7 +40,7 @@ Received my PhD degree from University College London.
 
 ### Mar 2026
 
-Gave a talk at the main COSYNE meeting. [Watch the talk](https://youtu.be/c5Vf0L5InSM?t=2276).
+Gave a talk at the Cosyne (Computational and Systems Neuroscience) main meeting about my [PhD work](https://www.biorxiv.org/content/10.1101/2025.11.28.691186v1). [Watch the talk](https://youtu.be/c5Vf0L5InSM?t=2276).
 
 ### 28 Nov 2025
 
